@@ -1,0 +1,74 @@
+---
+title: "ScholarData"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(knitr)
+```
+
+```{r}
+sd <- read_csv("data/applicant_countries_rfp16-18.csv")
+
+developing_countries <- c("Other", "Bangladesh", "India", "Brazil", "Mexico", "Romania", "Costa Rica", "Chile", "Bolivia", "Ecuador", "Poland", "Indonesia", "Argentina", "South Africa", "Ukraine", 
+                          "Bhutan", "Colombia", "Cameroon", "Nepal", "Malawi", "Malaysia", "Pakistan", "Nigeria", "Namibia", "Papa New Guinea", "Thailand", "Virgin Islands, U.s.", "Cote D'Ivoire",
+                          "Uganda", "Tanzania, United Republic of", "Ghana", "Singapore", "Guatemala")
+firstworld_countries <- c("United States", "Germany", "United Kingdom", "Canada", "Australia", "Austria", "Portugal", "Hungary", "Italy", "Finland", "Denmark", "New Zealand")
+western_countries <- c("United States", "Germany", "United Kingdom", "Canada", "Austria", "Portugal", "Hungary", "Italy", "Finland", "Denmark")
+
+sd_aw <- sd %>% 
+  filter(Status == "Awarded") %>% 
+  #add column that indicates if project was conducted from country of awardee's nationality
+  rename(project_country = `Project Country`) %>% 
+  mutate(project_nat = ifelse(project_country == Nationality & Nationality == Country & project_country == Country, "all_yes", 
+                              ifelse(project_country == Nationality & Nationality != Country & project_country != Country, "project_nat_yes",
+                                     ifelse(project_country != Nationality & Nationality == Country & project_country != Country, "nat_country_yes",
+                                            ifelse(project_country != Nationality & Nationality != Country & project_country == Country, "project_country_yes",
+                                                   ifelse(project_country != Nationality & Nationality != Country & project_country != Country, "all_no", NA))))),
+         usa_uk = ifelse(Country %in% c("United States", "United Kingdom") & !project_country %in% c("United States", "United Kingdom"), "working_abroad", "working_home"))
+
+sd_projSum <- sd_aw %>%
+  mutate(tot_n = n()) %>% 
+  group_by(project_nat, tot_n) %>% 
+  summarise(n = n()) %>% 
+  mutate(percent = round(n/tot_n, 2) * 100)
+
+sd_usSum <- sd_aw %>%
+  mutate(tot_n = n()) %>% 
+  group_by(usa_uk, tot_n) %>% 
+  summarise(n = n()) %>% 
+  mutate(percent = round(n/tot_n, 2) * 100)
+
+all_yes <- sd_projSum %>% filter(project_nat == "all_yes") %>% ungroup() %>% dplyr::select(percent)
+project_nat_yes <- sd_projSum %>% filter(project_nat == "project_nat_yes") %>% ungroup() %>% dplyr::select(percent)
+working_abroad <- sd_usSum %>% filter(usa_uk == "working_abroad") %>% ungroup() %>% dplyr::select(percent)
+
+#of the 16/35 students working in their country of origin, how many are NOT from US or European countries?
+sd_dev <- sd_aw %>%
+  filter(project_nat == "all_yes") %>% 
+  filter(!Country %in% western_countries)
+
+all_yes_devcountry <- nrow(sd_dev)
+```
+
+```{r}
+projSum <- sd_projSum %>%
+  mutate(percent_formatted = paste(percent, "% ", "(", n, "/", tot_n, ")", sep = "")) %>% 
+  dplyr::select(project_nat, percent_formatted) %>% 
+  spread(key = project_nat, value = percent_formatted)
+
+kable(projSum, col.names = c("Project!=Nationality!=Country", "Project=Nationality=Country", "Project!=Nationality=Country", "Project=Country!=Nationality", "Project=Nationality!=Country"))
+```
+
+
+
+Of the 35 students we've funded over the past 3 years, `r all_yes`% are from the country where the project is occurring and is studying in that country. An additional `r project_nat_yes`% students have projects in their country of nationality but are attending university elsewhere (typically the United States). `r working_abroad`% are US or UK students working abroad in developing countries.
+
+Of the 16/35 students working in their country of origin that are also studying in their country of origin, `r all_yes_devcountry` are not from US or European countries.
