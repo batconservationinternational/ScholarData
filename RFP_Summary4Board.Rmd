@@ -1,0 +1,286 @@
+---
+title: "Stats for Science Advisory Board"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(ggpubr)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(tmap)
+library(sf)
+library(RColorBrewer)
+```
+
+```{r}
+#Read in raw data from 2016 - 2018
+
+ad2016 <- read_csv("data/2016_ApplicantDemographics.csv") %>% mutate(year = 2016)
+ad2017 <- read_csv("data/2017_ApplicantDemographics.csv") %>% mutate(year = 2017)
+ad2018 <- read_csv("data/2018_ApplicantDemographics.csv") %>% mutate(year = 2018)
+
+#Combine into one file
+ad_all <- bind_rows(ad2016, ad2017, ad2018) %>% 
+  rename(student_status = `Student Status`) %>% 
+  mutate(student_status = factor(student_status, levels = c("Undergraduate", "Masters", "Ph.D.")))
+
+ad_aw <- ad_all %>% filter(Status == "Awarded") 
+
+ad_gen <- ad_aw %>% 
+  group_by(year) %>% 
+  summarise(tot_n = n()) %>% 
+  left_join(ad_aw) %>% 
+  group_by(year, Gender, tot_n) %>% 
+  summarise(n = n()) %>% 
+  mutate(perc = round(n/tot_n, 2) * 100,
+         perc_formatted = paste(perc, "% ", "(", n, "/", tot_n, ")", sep = ""),
+         y_formatted = ifelse(Gender == "Female", tot_n, n)) %>% 
+  dplyr::select(year, Gender, y_formatted, perc_formatted)
+```
+
+###1. Breakdown of awards by category
+####a. I can probably just use the numbers I pulled together on this, but please make a figure if you have a good idea for how to show this.
+
+```{r}
+ad_all %>%
+  ggplot(aes(x = year, fill = Status)) +
+  geom_bar(stat = "count") +
+  scale_fill_manual(values = c("#deebf7", "#3182bd"), "") +
+  geom_text(aes(label=..count..), stat="count", position=position_stack(0.5), size = 8) +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 14), axis.text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5)) +
+  ylab("# Applicants") +
+  xlab("") +
+  ggtitle("Awards by Year")
+```
+
+
+
+
+
+```{r}
+p1 <- ad_aw %>% 
+  ggplot(aes(x = year, fill = Gender)) +
+  geom_bar(stat = "count", position = "fill") +
+  geom_text(aes(label=scales::percent(..count../sum(..count..))),
+              stat='count',position=position_fill(vjust=0.5), size = 4) +
+  scale_fill_manual(values = c("#f1a340", "#998ec3"), "") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 14), axis.text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5)) +
+  #geom_text(aes(x = year, y = y_formatted/1.5, label = perc_formatted)) +
+  ylab("Proportion of Awardees") +
+  xlab("") +
+  ggtitle("Gender")
+
+p2 <- ad_aw %>% 
+  ggplot(aes(x = year, fill = student_status)) +
+  geom_bar(stat = "count", position = "fill") +
+  geom_text(aes(label=scales::percent(..count../sum(..count..))),
+              stat='count',position=position_fill(vjust=0.5), size = 4) +
+  scale_fill_manual(values = c("#e5f5f9", "#99d8c9", "#2ca25f"), "") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 14), axis.text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5)) +
+  ylab("Proportion of Awardees") +
+  xlab("") +
+  ggtitle("Degree in Progress")
+
+```
+
+
+```{r, fig.height = 6, fig.width = 10}
+ggarrange(p1, p2, nrow = 1)
+```
+
+
+
+
+####b. Applicants vs awardee proportions, do we have a bias towards one of the categories
+####c. Leaving out 2016 info because categories were different
+####d. For simplicity, if they selected more than one category, just having a "multi-category" group
+
+```{r}
+ad_cats <- bind_rows(ad2017, ad2018) %>% 
+  rename(categories = `Project Priority Category`) %>% 
+  separate(categories, into = c("cat1", "cat2", "cat3"), sep = "~") 
+
+#Dealing with multi-category entries
+cat1 <- ad_cats %>% filter(!is.na(cat1)) %>% dplyr::select(-c(cat2, cat3)) %>% rename(category = cat1)
+cat2 <- ad_cats %>% filter(!is.na(cat2)) %>% dplyr::select(-c(cat1, cat3)) %>% rename(category = cat2)
+cat3 <- ad_cats %>% filter(!is.na(cat3)) %>% dplyr::select(-c(cat1, cat2)) %>% rename(category = cat3)
+
+cat_all <- bind_rows(cat1, cat2, cat3) 
+
+#Figure out which individuals entered more than 1 category
+cat_sum <- cat_all %>%
+  group_by(`App ID`) %>% 
+  summarise(tot_cats = n())
+
+cat_mut <- cat_all %>% 
+  left_join(cat_sum) %>% 
+  mutate(value = 1,
+         value_adj = value/tot_cats) %>% #assigns a mean value to category by applicant ID
+  dplyr::select(-value, -tot_cats) 
+  
+#View(cat_mut)  
+  
+```
+
+```{r, fig.height = 6, fig.width = 8}
+cat_mut %>%
+  ggplot(aes(x = category, y = value_adj, fill = Status)) +
+  geom_bar(position = "fill", stat = "summary") +
+  scale_fill_manual(values = c("#deebf7", "#3182bd"), "") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 14), axis.text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5)) +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("") +
+  ylab("Proportion of Applicants") +
+  scale_x_discrete(labels = c("Category 1: \n Effects of \n Human-Caused \n Environmental \n Change on Bats", 
+                              "Category 2: \n Understanding \n & Resolving \n Bat/Human Conflicts", 
+                              "Category 3: \n Ecology & \n Conservation \n of Recognized \n Imperiled Species")) +
+  ggtitle("Proportion of Awards by Category")
+```
+
+
+###2. Breakdown of awards by gender
+####a. A figure would be best for this to show proportion of female applicants vs. awardees
+ 
+```{r}
+ad_all %>% 
+  ggplot(aes(x = Gender, fill = Status)) +
+  geom_bar(stat = "count", position = "fill") +
+  geom_text(aes(label=scales::percent(..count../sum(..count..))),
+              stat='count',position=position_fill(vjust=0.5), size = 4) +
+  scale_fill_manual(values = c("#deebf7", "#3182bd"), "") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 14), axis.text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5)) +
+  ylab("Proportion of Applicants") +
+  xlab("") +
+  ggtitle("Awards by Gender") +
+  facet_wrap(~year)
+```
+ 
+
+###3. Where are MSc applicants and awardees from?
+####a. The question about this has to do with the length of MSc projects and the kind of support they get around the world since they are generally less standardized than PhD programs. There probably isn't a figure we can make for this. I could just give them a list of the awardee institution countries. Thoughts?
+
+```{r}
+p1 <- ad_all %>%
+  filter(student_status == "Masters") %>% 
+  ggplot(aes(x = Country, fill = Status)) + 
+  geom_bar(stat = "count") +
+  scale_fill_manual(values = c("#deebf7", "#3182bd"), "") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom",
+        text = element_text(size = 12), axis.text = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5)) +
+  xlab("") +
+  ylab("# Applicants") +
+  ggtitle("Country of Study")
+
+p2 <- ad_all %>%
+  filter(student_status == "Masters") %>% 
+  ggplot(aes(x = Nationality, fill = Status)) + 
+  geom_bar(stat = "count") +
+  scale_fill_manual(values = c("#fee0d2", "#de2d26"), "") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom",
+        text = element_text(size = 12), axis.text = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5)) +
+  xlab("") +
+  ylab("# Applicants") +
+  ggtitle("Nationality")
+```
+
+```{r, fig.height = 6, fig.width = 12}
+ggarrange(p1, p2, nrow = 1, common.legend = FALSE, legend = "bottom")
+             #top = textGrob("Where are Masters Applicants from?"))
+```
+ 
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+#Find which country names don't match between sf country names and our country names
+#wnames <- unique(world$name)
+#rfpnames <- unique(ad_all$Country)
+#rfpnat <- unique(ad_all$Nationality)
+#setdiff(rfpnames, wnames)
+#setdiff(rfpnat, wnames)
+
+ad_country_map <- ad_all %>%
+  mutate(Country = ifelse(Country == "Cote D'Ivoire", "Côte d'Ivoire",
+                          ifelse(Country == "Virgin Islands, U.s.", "U.S. Virgin Is.",
+                                 ifelse(Country == "Tanzania, United Republic of", "Tanzania", 
+                                        ifelse(Country == "Other", NA, Country))))) %>% 
+  group_by(Country, Status, student_status) %>% 
+  summarise(no_applicants = n()) %>% 
+  left_join(world, by = c("Country" = "name")) 
+
+ad_country_sf <- st_as_sf(ad_country_map)
+```
+
+
+
+
+```{r}
+cuts <- c(0, 1, 2, 4, 6, 8, 10, 12, 14)
+blues <-brewer.pal(7, "Blues")
+app_cols <- c("white", blues)
+
+tm_shape(world) +
+  tm_layout(title = "Country of Study") +
+  tm_borders() +
+  tm_shape(ad_country_sf) +
+  tm_polygons("no_applicants", palette = app_cols,
+              breaks = cuts,
+              labels = c("0", "1-2", "3-4", "5-6", "7-8", "9-10", "11-12", "13-14"),
+              title = "Number of Applicants") +
+  tm_facets("Status")
+```
+
+```{r}
+ad_nationality_map <- ad_all %>%
+  mutate(Nationality = ifelse(Nationality == "Cote D'Ivoire", "Côte d'Ivoire",
+                          ifelse(Nationality == "Virgin Islands, U.s.", "U.S. Virgin Is.",
+                                 ifelse(Nationality == "Tanzania, United Republic of", "Tanzania", 
+                                        ifelse(Nationality == "Other", NA, Nationality))))) %>% 
+  group_by(Country, Status, student_status) %>% 
+  summarise(no_applicants = n()) %>% 
+  left_join(world, by = c("Country" = "name")) 
+
+ad_nationality_sf <- st_as_sf(ad_nationality_map)
+         
+```
+ 
+```{r}
+cuts <- c(0, 1, 2, 4, 6, 8, 10, 12, 14)
+reds <-brewer.pal(7, "Reds")
+app_cols <- c("white", reds)
+
+tm_shape(world) +
+  tm_layout(title = "Nationality") +
+  tm_borders() +
+  tm_shape(ad_nationality_sf) +
+  tm_polygons("no_applicants", palette = app_cols,
+              breaks = cuts,
+              labels = c("0", "1-2", "3-4", "5-6", "7-8", "9-10", "11-12", "13-14"),
+              title = "Number of Applicants") +
+  tm_facets("Status")
+```
